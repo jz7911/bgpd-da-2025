@@ -380,6 +380,79 @@ function lsClear(){
   }catch(e){}
 }
 
+function confirmClearScores(){
+  // Build mode-appropriate message and action
+  const isReview = MODE === 'review';
+  const isAdmin  = MODE === 'admin';
+  const who = isReview ? `all scores for <strong>${REVIEWER_NAME}</strong>` : 'all scores';
+  const detail = isReview
+    ? 'This will delete your individual reviewer scores from this browser and the database. Other reviewers\' scores are unaffected.'
+    : isAdmin
+      ? 'This will delete ALL Self-Review and ALL Evaluation Team scores from this browser and the database. Standards and evidence documents are not affected.'
+      : 'This will delete your Self-Review scores from this browser and the database.';
+
+  modal('Clear ' + (isReview ? 'my scores' : 'all scores'),
+    `<div class="warn-box"><strong>Clear ${who}?</strong><br><br>${detail}</div>`,
+    async () => {
+      toast('Clearing scores…');
+      if (isReview) {
+        // Clear only this reviewer's scores
+        localStorage.removeItem('bgpd_da_da_review_scores_' + REVIEWER_NAME);
+        // Reset in-memory: remove this reviewer from all standards
+        Object.keys(REVIEW_SCORES).forEach(id => {
+          REVIEW_SCORES[id] = (REVIEW_SCORES[id]||[]).filter(r => r.reviewer_name !== REVIEWER_NAME);
+        });
+        try {
+          await sb('da_review_scores','DELETE',null,'?reviewer_name=eq.'+encodeURIComponent(REVIEWER_NAME));
+          toast('Your scores cleared ✓');
+        } catch(e){ toast('Scores cleared locally'); }
+      } else if (MODE === 'self') {
+        // Clear self-review scores only
+        localStorage.removeItem('bgpd_da_da_self_scores');
+        SELF_SCORES = {};
+        try {
+          await sb('da_self_scores','DELETE',null,'?score=gte.0');
+          toast('Self-review scores cleared ✓');
+        } catch(e){ toast('Scores cleared locally'); }
+      } else {
+        // Admin: clear everything
+        localStorage.removeItem('bgpd_da_da_self_scores');
+        Object.keys(localStorage).filter(k=>k.startsWith('bgpd_da_da_review_scores')).forEach(k=>localStorage.removeItem(k));
+        SELF_SCORES = {};
+        REVIEW_SCORES = {};
+        try {
+          await Promise.all([
+            sb('da_self_scores','DELETE',null,'?score=gte.0'),
+            sb('da_review_scores','DELETE',null,'?score=gte.0'),
+          ]);
+          toast('All scores cleared ✓');
+        } catch(e){ toast('Scores cleared locally'); }
+      }
+      render();
+    }, 'Clear scores', true);
+}
+
+// Clear a single standard's score
+function clearStdScore(stdId) {
+  const name = stdId.startsWith('legal_') ? 'L.'+(parseInt(stdId.split('_')[1])+1) : stdId;
+  modal('Clear score for ' + name,
+    `<div class="warn-box">Clear the score for <strong>${name}</strong>?${MODE==='review'?' Only your score will be removed.':''}</div>`,
+    async () => {
+      if (MODE === 'review') {
+        const arr = REVIEW_SCORES[stdId]||[];
+        REVIEW_SCORES[stdId] = arr.filter(r => r.reviewer_name !== REVIEWER_NAME);
+        lsSet('da_review_scores_'+REVIEWER_NAME, REVIEW_SCORES);
+        try { await sb('da_review_scores','DELETE',null,'?std_id=eq.'+encodeURIComponent(stdId)+'&reviewer_name=eq.'+encodeURIComponent(REVIEWER_NAME)); } catch(e){}
+      } else {
+        delete SELF_SCORES[stdId];
+        lsSet('da_self_scores', SELF_SCORES);
+        try { await sb('da_self_scores','DELETE',null,'?std_id=eq.'+encodeURIComponent(stdId)); } catch(e){}
+      }
+      toast('Score cleared');
+      render();
+    }, 'Clear', true);
+}
+
 
 let SELF_SCORES = {}; // std_id -> {score, notes}
 let REVIEW_SCORES = {}; // std_id -> [{reviewer_name, score, notes}]
@@ -733,11 +806,16 @@ function buildTopbar(){
     ${MODE==='admin'?`
       <button class="tb-btn" onclick="exportData()">⬇ Export</button>
       <button class="tb-btn primary" onclick="openImport()">⬆ Import</button>
+      <button class="tb-btn danger" onclick="confirmClearScores()">🗑 Clear scores</button>
       <button class="tb-btn" onclick="lsClear()" title="Force reload from Supabase">↺ Clear cache</button>
     `:''}
     ${MODE==='review'?`
       <button class="tb-btn" onclick="openReviewSummary()">📊 Team summary</button>
       <button class="tb-btn" onclick="loadReviewScores().then(()=>renderMain())"><div class="spinner" style="width:10px;height:10px;margin-right:3px"></div> Refresh</button>
+      <button class="tb-btn danger" onclick="confirmClearScores()">🗑 Clear my scores</button>
+    `:''}
+    ${MODE==='self'?`
+      <button class="tb-btn danger" onclick="confirmClearScores()">🗑 Clear my scores</button>
     `:''}
     <button class="tb-btn" onclick="switchMode()" style="margin-left:4px">⇄ Switch mode</button>`;
 }
@@ -876,6 +954,7 @@ function renderLegal(){
             <option value="2" ${score==2?'selected':''}>2 Met ✓</option>
             <option value="3" ${score==3?'selected':''}>3 Full ✓</option>
           </select>
+          ${score>0?`<button class="ibtn" title="Clear this score" onclick="event.stopPropagation();clearStdScore('${stdId}')" style="color:var(--faint);font-size:11px;padding:2px 4px">✕</button>`:''}
           ${MODE==='review'?renderReviewChips(stdId):''}
           <div class="score-dot" style="background:${bc}"></div>
           <span class="chev${open?' open':''}">▼</span>
@@ -939,6 +1018,7 @@ function renderSection(secId){
           <option value="2" ${score==2?'selected':''}>2</option>
           <option value="3" ${score==3?'selected':''}>3</option>
         </select>
+        ${score>0?`<button class="ibtn" title="Clear" onclick="clearStdScore('${std.id}')" style="color:var(--faint);font-size:11px;padding:2px 4px">✕</button>`:''}
         <div class="score-dot" style="background:${bc};margin-left:4px"></div>
       </div>`;
     });
@@ -982,6 +1062,7 @@ function renderStandard(secId, std){
           <option value="2" ${score==2?'selected':''}>2 Almost</option>
           <option value="3" ${score==3?'selected':''}>3 Full</option>
         </select>
+        ${score>0?`<button class="ibtn" title="Clear this score" onclick="event.stopPropagation();clearStdScore('${std.id}')" style="color:var(--faint);font-size:11px;padding:2px 4px">✕</button>`:''}
         ${MODE==='review'?renderReviewChips(std.id):''}
         <div class="score-dot" style="background:${bc}"></div>
         <span class="chev${open?' open':''}">▼</span>
