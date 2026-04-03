@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Buffalo Grove PD — DA Accreditation 2025</title>
+<title>Buffalo Grove PD — DA Accreditation</title>
 <style>
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap');
@@ -253,8 +253,8 @@ select.form-input{cursor:pointer}
   <div class="mode-logo">
     <div class="mode-logo-icon">BG</div>
     <div class="mode-logo-text">
-      <h1>DA Accreditation 2025</h1>
-      <p>Buffalo Grove Park District · IAPD/IPRA Standards</p>
+      <h1 id="mode-screen-title">DA Accreditation</h1>
+      <p id="mode-screen-sub">Buffalo Grove Park District · IAPD/IPRA Standards</p>
     </div>
   </div>
   <div id="file-protocol-banner" style="display:none;margin-bottom:16px;padding:10px 16px;background:#e8f5f5;border:1px solid #b2d8da;border-radius:8px;font-size:12px;color:#1d6e72;max-width:760px;text-align:center">
@@ -375,6 +375,9 @@ function enterApp() {
   document.getElementById('app').style.display = 'flex';
   injectDocEditorStyles();
   init();
+  // Update browser tab title with active year
+  var yearMatch = DA_YEAR_LABEL.match(/\d{4}/);
+  if (yearMatch) document.title = 'Buffalo Grove PD \u2014 DA ' + yearMatch[0];
 }
 
 document.getElementById('mode-name-input').addEventListener('keydown', function(e) {
@@ -405,6 +408,11 @@ function lsGet(key) {
   try { var v = localStorage.getItem('bgpd_da_' + key); return v ? JSON.parse(v) : null; } catch(e) { return null; }
 }
 function lsClear() {
+  // Clear cache explanation: The app saves a local copy of all data in your browser
+  // (localStorage) so it loads instantly even offline. 'Clear cache' wipes that local
+  // copy and forces a fresh pull from Supabase on next load. Use this if data looks
+  // out of sync between devices, or after another admin made changes you're not seeing.
+  if (!confirm('Clear local cache?\n\nThis removes the locally stored copy of standards, evidence links, and sync timestamps from THIS browser only. Data in Supabase is not affected.\n\nThe page will reload and pull fresh data from the server.')) return;
   try {
     var keys = [];
     for (var i = 0; i < localStorage.length; i++) {
@@ -412,7 +420,8 @@ function lsClear() {
       if (k && k.startsWith('bgpd_da_')) keys.push(k);
     }
     keys.forEach(function(k) { localStorage.removeItem(k); });
-    toast('Local cache cleared — reload to resync from Supabase');
+    toast('Cache cleared — reloading…');
+    setTimeout(function() { location.reload(); }, 800);
   } catch(e) {}
 }
 
@@ -465,6 +474,12 @@ function getLinks(secId, stdId, subId) {
 // INIT & SYNC
 // ═══════════════════════════════════════
 async function init() {
+  // Restore active year from localStorage (persists across page refreshes)
+  var savedYear = lsGet('da_active_year');
+  if (savedYear && savedYear.id && savedYear.label) {
+    DA_YEAR_ID = savedYear.id;
+    DA_YEAR_LABEL = savedYear.label;
+  }
   var cached = lsGet('da_app_state');
   if (cached) {
     APP.sections = cached.sections || [];
@@ -481,6 +496,11 @@ async function init() {
     var cachedReview = lsGet('da_review_scores_' + REVIEWER_NAME);
     if (cachedReview) REVIEW_SCORES = cachedReview;
   }
+  // Update mode screen title with active year label
+  var mst = document.getElementById('mode-screen-title');
+  var mss = document.getElementById('mode-screen-sub');
+  if (mst) mst.textContent = 'DA Accreditation — ' + (DA_YEAR_LABEL.match(/\d{4}/)||[''])[0];
+  if (mss) mss.textContent = 'Buffalo Grove Park District · IAPD/IPRA Standards';
   render();
   syncWithSupabase();
   if (MODE === 'review') setInterval(pollReviewScores, 20000);
@@ -604,33 +624,35 @@ function buildSidebar() {
   sbar.innerHTML = '<div class="brand">'
     + '<div class="brand-logo">BG</div>'
     + '<div><div class="brand-name">Buffalo Grove PD</div>'
-    + '<div class="brand-sub">DA 2025 · <span style="color:' + modeColor + ';font-weight:600">' + modeLabel + nameStr + '</span></div>'
+    + '<div class="brand-sub">DA ' + (DA_YEAR_LABEL.match(/\d{4}/)||['????'])[0] + ' · <span style="color:' + modeColor + ';font-weight:600">' + modeLabel + nameStr + '</span></div>'
     + '</div></div>';
 
   sbar.innerHTML += '<div class="nav-label">Navigation</div>';
 
-  var navItems = [
-    { id: 'overview', label: 'Overview', dot: '#888' },
-    { id: 'legal', label: 'Legal', dot: '#991b1b', extra: legalPass() ? '✓' : '✗', extraColor: legalPass() ? '#22c55e' : '#ef4444' }
-  ];
+  // Overview only in top nav
+  var overviewEl = document.createElement('div');
+  overviewEl.className = 'nav-item' + (UI.activeSection === 'overview' ? ' active' : '');
+  overviewEl.innerHTML = '<span class="nav-dot" style="background:#888"></span><span style="flex:1">Overview</span>';
+  overviewEl.onclick = function() { UI.activeSection = 'overview'; render(); };
+  sbar.appendChild(overviewEl);
 
-  navItems.forEach(function(n) {
-    var el = document.createElement('div');
-    el.className = 'nav-item' + (UI.activeSection === n.id ? ' active' : '');
-    el.innerHTML = '<span class="nav-dot" style="background:' + n.dot + '"></span>'
-      + '<span style="flex:1">' + n.label + '</span>'
-      + (n.extra ? '<span style="font-size:12px;margin-left:auto;color:' + n.extraColor + '">' + n.extra + '</span>' : '');
-    el.onclick = function() { UI.activeSection = n.id; render(); };
-    sbar.appendChild(el);
-  });
+  // Sections header — Legal always appears first under it
+  var sectLbl = document.createElement('div');
+  sectLbl.className = 'nav-label';
+  sectLbl.style.marginTop = '4px';
+  sectLbl.textContent = 'Sections';
+  sbar.appendChild(sectLbl);
 
-  if (APP.sections.length) {
-    var lbl = document.createElement('div');
-    lbl.className = 'nav-label';
-    lbl.style.marginTop = '4px';
-    lbl.textContent = 'Sections';
-    sbar.appendChild(lbl);
-  }
+  // Legal as first item under Sections
+  var legalActive = UI.activeSection === 'legal';
+  var legalOk = legalPass();
+  var legalEl = document.createElement('div');
+  legalEl.className = 'nav-item' + (legalActive ? ' active' : '');
+  legalEl.innerHTML = '<span class="nav-dot" style="background:#991b1b"></span>'
+    + '<span style="flex:1">Legal</span>'
+    + '<span style="font-size:12px;margin-left:auto;color:' + (legalOk ? '#22c55e' : '#ef4444') + '">' + (legalOk ? '✓' : '✗') + '</span>';
+  legalEl.onclick = function() { UI.activeSection = 'legal'; render(); };
+  sbar.appendChild(legalEl);
 
   APP.sections.forEach(function(sec) {
     var prog = secProg(sec);
@@ -692,12 +714,18 @@ function buildTopbar() {
       + '<button class="tb-btn primary" onclick="openImport()">⬆ Import</button>'
       + '<button class="tb-btn danger" onclick="confirmClearScores()">🗑 Clear scores</button>'
       + '<button class="tb-btn" onclick="lsClear()" title="Force reload from Supabase">↺ Clear cache</button>'
+      + '<button class="tb-btn" onclick="openYearHistory()">📅 DA History</button>'
+      + '<button class="tb-btn" onclick="openArchiveYear()">📦 Archive</button>'
+      + '<button class="tb-btn" onclick="openEmailSummary()">✉ Email summary</button>'
+      + '<button class="tb-btn" onclick="openPrintSummary()">🖨 Print / PDF</button>'
     : '';
 
   var reviewBtns = MODE === 'review'
     ? '<button class="tb-btn" onclick="openReviewSummary()">📊 Team summary</button>'
       + '<button class="tb-btn" onclick="loadReviewScores().then(function(){renderMain();})"><div class="spinner" style="width:10px;height:10px;margin-right:3px"></div> Refresh</button>'
       + '<button class="tb-btn danger" onclick="confirmClearScores()">🗑 Clear my scores</button>'
+      + '<button class="tb-btn" onclick="openEmailSummary()">✉ Email summary</button>'
+      + '<button class="tb-btn" onclick="openPrintSummary()">🖨 Print / PDF</button>'
     : '';
 
   var selfBtn = MODE === 'self' ? '<button class="tb-btn danger" onclick="confirmClearScores()">🗑 Clear my scores</button>' : '';
@@ -815,6 +843,11 @@ function renderOverview() {
 
   if (MODE === 'review') h += renderReviewOverview();
 
+  if (MODE === 'admin' || MODE === 'self') {
+    h += renderEvidenceProgress();
+    h += renderMissingDocs();
+  }
+
   var addTlBtn = MODE === 'admin' ? '<button class="sm-btn add" onclick="openAddTimeline()">＋ Add</button>' : '';
   h += '<div class="panel"><div class="panel-hdr"><div class="panel-title">Application milestones</div>' + addTlBtn + '</div>';
   APP.timeline.forEach(function(t, i) {
@@ -847,8 +880,9 @@ function renderOverview() {
     + '<div class="score-box" style="background:#f0fdf4"><div style="font-size:18px;font-weight:700;color:#16a34a;margin-bottom:3px">3</div><div style="font-size:11px;color:#166534">Full — 100% met</div></div>'
     + '</div></div>';
 
-  h += '<div style="margin-top:4px;display:flex;justify-content:flex-end">'
-    + '<button class="tb-btn primary" onclick="saveAppState();toast(\'Saved ✓\')" style="padding:8px 20px">💾 Save</button>'
+  h += '<div style="margin-top:4px;display:flex;justify-content:flex-end;gap:8px">'
+    + (MODE === 'admin' ? '<button class="tb-btn" onclick="openImportStandards()">&#8679; Import standards</button><button class="tb-btn" onclick="openNewYear()">&#xff0b; New DA cycle</button>' : '')
+    + '<button class="tb-btn primary" onclick="saveAppState();toast(\"Saved ✓\")" style="padding:8px 20px">&#128190; Save</button>'
     + '</div>';
 
   document.getElementById('main').innerHTML = h;
@@ -937,8 +971,6 @@ function renderLegal() {
         h += '</div>';
       }
       if (MODE === 'admin') {
-        h += renderAddDocRow('legal', String(i), null);
-        h += renderDropzone('legal', String(i), null);
         h += renderFileManagerSection(stdId);
       }
       if (MODE !== 'review') {
@@ -1064,8 +1096,6 @@ function renderStdBody(secId, std) {
     h += '</div>';
   }
   if (MODE === 'admin') {
-    h += renderAddDocRow(secId, std.id, null);
-    h += renderDropzone(secId, std.id, null);
     h += renderFileManagerSection(std.id);
   }
   if (std.subs && std.subs.length) {
@@ -1104,7 +1134,7 @@ function renderSubStd(secId, stdId, sub) {
       ? renderEvidList(secId, stdId, sub.id, sub.links)
       : '<div class="ev-missing">No evidence documents yet</div>';
     var adminExtra = MODE === 'admin'
-      ? renderAddDocRow(secId, stdId, sub.id) + renderDropzone(secId, stdId, sub.id) + renderFileManagerSection(sub.id)
+      ? renderFileManagerSection(sub.id)
       : '';
     body = '<div class="sub-body">' + evidHtml + adminExtra + '</div>';
   }
@@ -1121,47 +1151,220 @@ function renderSubStd(secId, stdId, sub) {
 // ═══════════════════════════════════════
 // EVIDENCE LIST
 // ═══════════════════════════════════════
+function evidDocId() {
+  return 'doc' + Math.random().toString(36).slice(2, 9);
+}
+
+function ensureDocs(lnk) {
+  if (!lnk.docs) lnk.docs = [];
+  // Migrate legacy single url into docs[] if present
+  if (lnk.url && lnk.url.indexOf('http') === 0 && lnk.docs.length === 0) {
+    lnk.docs.push({ id: evidDocId(), url: lnk.url, name: lnk.url, type: 'link' });
+    lnk.url = ''; // clear legacy url so we don't migrate again
+    scheduleSave();
+  }
+  return lnk;
+}
+
 function renderEvidList(secId, stdId, subId, links) {
   var h = '<div class="ev-list">';
+  var canEdit = MODE === 'admin' || MODE === 'self';
+
   links.forEach(function(lnk, i) {
-    var isUrl = lnk.url && lnk.url.indexOf('http') === 0;
-    var blobUrl = lnk.blobUrl || LOCAL_FILE_CACHE[lnk.url] || '';
+    ensureDocs(lnk);
+
     var letterM = lnk.label ? lnk.label.match(/^([a-z]\.|[0-9]+\))\s*/) : null;
     var letter = letterM ? letterM[0].trim() : '';
     var labelText = letter ? lnk.label.slice(letterM[0].length).trim() : (lnk.label || '');
-    var previewKey = secId + '__' + stdId + '__' + (subId || '') + '__' + i;
-    var isOpen = !!PREVIEW_OPEN[previewKey];
+    var evKey = secId + '__' + stdId + '__' + (subId || '') + '__' + i;
 
-    PREVIEW_DATA[previewKey] = { url: lnk.url, label: labelText || lnk.url, blobUrl: blobUrl };
+    // ── Evidence item header row ──────────────────────────────────────────
+    var adminBtns = canEdit
+      ? '<div class="ev-acts">'
+        + '<button class="ibtn" onclick="openEditDoc(\'' + secId + '\',\'' + stdId + '\',\'' + (subId||'') + '\',' + i + ')" title="Edit label">✎</button>'
+        + '<button class="ibtn del" onclick="deleteDoc(\'' + secId + '\',\'' + stdId + '\',\'' + (subId||'') + '\',' + i + ')" title="Remove evidence item">✕</button>'
+        + '</div>'
+      : '';
 
-    var openBtn = '';
-    if (isUrl || blobUrl) {
-      var btnLabel = isOpen ? '▲ Close' : '▼ Preview';
-      var btnClass = 'ev-link' + (isOpen ? ' active' : '');
-      openBtn = '<button class="' + btnClass + '" onclick="handlePreviewClick(event,\'' + previewKey + '\')">' + btnLabel + '</button>'
-        + '<a class="ev-link" href="' + (blobUrl || lnk.url) + '" target="_blank" style="margin-left:2px">⬡</a>';
-    } else {
-      openBtn = '<span style="font-size:11px;color:var(--muted);font-family:var(--mono);flex-shrink:0">' + (lnk.url || '') + '</span>';
+    h += '<div class="ev-item" style="border:1px solid var(--border);border-radius:6px;margin-bottom:8px;overflow:hidden">';
+
+    // Header: letter + label text + admin edit/delete
+    h += '<div class="ev-item-hdr" style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:var(--bg)">'
+      + '<span class="ev-letter" style="padding-top:1px">' + letter + '</span>'
+      + '<span class="ev-label" style="flex:1">' + (labelText || lnk.label || '') + '</span>'
+      + adminBtns
+      + '</div>';
+
+    // ── Attached documents ────────────────────────────────────────────────
+    if (lnk.docs && lnk.docs.length) {
+      h += '<div style="padding:4px 10px 6px 10px;border-top:1px solid var(--border)">';
+      lnk.docs.forEach(function(doc, di) {
+        var docKey = evKey + '__' + di;
+        var isOpen = !!PREVIEW_OPEN[docKey];
+        var isUrl = doc.url && doc.url.indexOf('http') === 0;
+        var blobUrl = doc.blobUrl || LOCAL_FILE_CACHE[doc.url] || '';
+        var effectiveUrl = blobUrl || doc.url;
+        var displayName = doc.name || doc.url || 'Document';
+
+        PREVIEW_DATA[docKey] = { url: doc.url, label: displayName, blobUrl: blobUrl };
+
+        var previewBtn = '';
+        if (isUrl || blobUrl) {
+          var btnLabel = isOpen ? '▲ Close' : '▼ Preview';
+          previewBtn = '<button class="' + (isOpen ? 'ev-link active' : 'ev-link') + '" onclick="handlePreviewClick(event,\'' + docKey + '\')" style="font-size:10px;padding:2px 7px">' + btnLabel + '</button>'
+            + '<a class="ev-link" href="' + effectiveUrl + '" target="_blank" style="font-size:10px;padding:2px 7px;margin-left:2px">⬡</a>';
+        }
+
+        var delBtn = canEdit
+          ? '<button class="ibtn del" onclick="deleteEvidDoc(\'' + secId + '\',\'' + stdId + '\',\'' + (subId||'') + '\',' + i + ',' + di + ')" style="font-size:10px;padding:1px 4px;margin-left:4px" title="Remove this document">✕</button>'
+          : '';
+
+        h += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px dashed var(--border)">'
+          + '<span style="font-size:16px;flex-shrink:0">' + evidDocIcon(doc) + '</span>'
+          + '<span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">' + displayName + '</span>'
+          + previewBtn
+          + delBtn
+          + '</div>';
+
+        // Inline preview panel
+        if (isOpen) {
+          h += renderInlinePreview(docKey);
+        }
+      });
+      h += '</div>';
+    } else if (!canEdit) {
+      h += '<div style="padding:5px 10px;font-size:11px;color:var(--faint);font-style:italic;border-top:1px solid var(--border)">No documents attached yet</div>';
     }
 
-    var adminBtns = MODE === 'admin'
-      ? '<div class="ev-acts">'
-        + '<button class="ibtn" onclick="openEditDoc(\'' + secId + '\',\'' + stdId + '\',\'' + (subId || '') + '\',' + i + ')">✎</button>'
-        + '<button class="ibtn del" onclick="deleteDoc(\'' + secId + '\',\'' + stdId + '\',\'' + (subId || '') + '\',' + i + ')">✕</button>'
-        + '</div>' : '';
+    // ── Add document row (admin + self mode) ──────────────────────────────
+    if (canEdit) {
+      var addKey = evKey + '_add';
+      h += '<div style="padding:5px 8px;border-top:1px solid var(--border);background:#fafaf8;display:flex;gap:5px;align-items:center;flex-wrap:wrap">'
+        // Google Drive / URL input
+        + '<input id="evurl-' + addKey + '" class="edit-field" style="flex:2;min-width:120px;font-size:11px;padding:4px 7px" placeholder="Paste Google Drive or URL…">'
+        + '<button class="sm-btn add" onclick="addEvidDoc(\'' + secId + '\',\'' + stdId + '\',\'' + (subId||'') + '\',' + i + ',\'' + addKey + '\')" style="font-size:11px;white-space:nowrap">＋ Link</button>'
+        // File upload
+        + '<label style="font-size:11px;padding:4px 9px;border:1px solid var(--border-d);border-radius:4px;background:var(--surf);color:var(--muted);cursor:pointer;white-space:nowrap">⬆ File<input type="file" multiple style="display:none" onchange="uploadEvidFile(event,\'' + secId + '\',\'' + stdId + '\',\'' + (subId||'') + '\',' + i + ')"></label>'
+        + '</div>';
+    }
 
-    h += '<div class="ev-row" style="flex-direction:column;align-items:stretch">'
-      + '<div style="display:flex;align-items:flex-start;gap:8px">'
-      + '<span class="ev-letter">' + letter + '</span>'
-      + '<span class="ev-label">' + (labelText || lnk.url) + '</span>'
-      + openBtn + adminBtns
-      + '</div>'
-      + renderInlinePreview(previewKey)
-      + '</div>';
+    h += '</div>'; // end ev-item
   });
+
+  // Add new evidence item row (admin only)
+  if (MODE === 'admin') {
+    var addRowKey = secId + '__' + stdId + '__' + (subId||'') + '__new';
+    h += '<div class="add-doc-row" style="margin-top:4px">'
+      + '<input id="dl-' + (subId||stdId) + '" class="edit-field" style="flex:1;font-size:11px" placeholder="Evidence label (e.g. a. Copy of board minutes)">'
+      + '<button class="sm-btn add" onclick="addDoc(\'' + secId + '\',\'' + stdId + '\',\'' + (subId||'') + '\')" style="font-size:11px">＋ Add item</button>'
+      + '</div>';
+  }
+
   h += '</div>';
   return h;
 }
+
+function evidDocIcon(doc) {
+  if (!doc.url && !doc.blobUrl) return '📋';
+  var url = doc.url || '';
+  if (url.indexOf('drive.google.com') >= 0) return '📁';
+  if (url.indexOf('docs.google.com') >= 0) return '📝';
+  if (url.indexOf('sheets.google.com') >= 0) return '📊';
+  if (url.indexOf('slides.google.com') >= 0) return '📑';
+  var ext = (doc.name || url).split('.').pop().toLowerCase();
+  if (ext === 'pdf') return '📄';
+  if (ext === 'docx' || ext === 'doc') return '📝';
+  if (ext === 'xlsx' || ext === 'xls') return '📊';
+  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') return '🖼';
+  return '📎';
+}
+
+function addEvidDoc(secId, stdId, subId, linkIdx, addKey) {
+  var urlEl = document.getElementById('evurl-' + addKey);
+  var url = urlEl ? urlEl.value.trim() : '';
+  if (!url) { toast('Paste a URL or Google Drive link first'); return; }
+
+  var links = getLinks(secId, stdId, subId || null);
+  var lnk = links[linkIdx];
+  if (!lnk) return;
+  ensureDocs(lnk);
+
+  // Derive a display name from the URL
+  var name = url;
+  if (url.indexOf('drive.google.com') >= 0) name = 'Google Drive document';
+  else if (url.indexOf('docs.google.com') >= 0) name = 'Google Doc';
+  else if (url.indexOf('sheets.google.com') >= 0) name = 'Google Sheet';
+  else if (url.indexOf('slides.google.com') >= 0) name = 'Google Slides';
+  else {
+    // Try to get filename from URL
+    var parts = url.split('/');
+    var last = parts[parts.length - 1].split('?')[0];
+    if (last) name = decodeURIComponent(last);
+  }
+
+  lnk.docs.push({ id: evidDocId(), url: url, name: name, type: 'link' });
+  if (urlEl) urlEl.value = '';
+  scheduleSave();
+  render();
+  toast('Link added');
+}
+
+async function uploadEvidFile(event, secId, stdId, subId, linkIdx) {
+  var files = Array.from(event.target.files);
+  if (!files.length) return;
+
+  var links = getLinks(secId, stdId, subId || null);
+  var lnk = links[linkIdx];
+  if (!lnk) return;
+  ensureDocs(lnk);
+
+  toast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…');
+
+  for (var fi = 0; fi < files.length; fi++) {
+    var file = files[fi];
+    try {
+      // Create blob URL for immediate local access
+      var blobUrl = URL.createObjectURL(file);
+      LOCAL_FILE_CACHE[file.name] = blobUrl;
+
+      var doc = { id: evidDocId(), url: '', name: file.name, type: 'upload', blobUrl: blobUrl };
+
+      // Try to upload to Supabase Storage if available
+      if (location.protocol !== 'file:') {
+        try {
+          var result = await uploadFileToStorage(file, stdId + '_evid');
+          doc.url = result.publicUrl;
+          doc.blobUrl = ''; // have permanent URL now
+        } catch(ue) {
+          // Keep blob URL as fallback, note it's session-only
+          doc.name = file.name + ' (session only — no server)';
+          console.warn('Storage upload failed, using blob URL:', ue);
+        }
+      }
+
+      lnk.docs.push(doc);
+    } catch(e) {
+      toast('Upload failed: ' + file.name);
+      console.error(e);
+    }
+  }
+
+  scheduleSave();
+  render();
+  toast('Upload complete');
+}
+
+function deleteEvidDoc(secId, stdId, subId, linkIdx, docIdx) {
+  var links = getLinks(secId, stdId, subId || null);
+  var lnk = links[linkIdx];
+  if (!lnk || !lnk.docs) return;
+  lnk.docs.splice(docIdx, 1);
+  scheduleSave();
+  render();
+  toast('Document removed');
+}
+
+
 
 function renderAddDocRow(secId, stdId, subId) {
   var key = subId || stdId;
@@ -1363,7 +1566,7 @@ function addDoc(secId, stdId, subId) {
   label = label.trim(); url = url.trim();
   if (!url) { toast('Please enter a URL or file name'); return; }
   var links = getLinks(secId, stdId, subId || null);
-  links.push({ label: label, url: url });
+  links.push({ label: label, url: '', docs: [] });
   scheduleSave(); render(); toast('Document added');
 }
 
@@ -1789,7 +1992,8 @@ async function saveFileRecord(stdId, file, path, uploadedBy, label) {
     file_type: file.name.split('.').pop().toLowerCase(),
     file_size: file.size, label: label || file.name,
     uploaded_by: uploadedBy || 'admin',
-    uploaded_at: new Date().toISOString(), notes: ''
+    uploaded_at: new Date().toISOString(), notes: '',
+    year_id: DA_YEAR_ID
   };
   var res = await sb('da_files', 'POST', row, '');
   if (res && res[0]) return res[0];
@@ -1798,7 +2002,7 @@ async function saveFileRecord(stdId, file, path, uploadedBy, label) {
 }
 
 async function loadFilesForStd(stdId) {
-  var rows = await sb('da_files', 'GET', null, '?std_id=eq.' + encodeURIComponent(stdId) + '&order=uploaded_at.asc');
+  var rows = await sb('da_files', 'GET', null, '?std_id=eq.' + encodeURIComponent(stdId) + '&year_id=eq.' + encodeURIComponent(DA_YEAR_ID) + '&order=uploaded_at.asc');
   return rows || [];
 }
 
@@ -1967,6 +2171,163 @@ function injectDocEditorStyles() {
 // ═══════════════════════════════════════
 // DEFAULT DATA
 // ═══════════════════════════════════════
+// ── Helper: does a link have at least one real document? ─────────────────
+function linkHasDoc(lnk) {
+  // Check new docs[] array
+  if (lnk.docs && lnk.docs.length) {
+    return lnk.docs.some(function(d) { return (d.url && d.url.indexOf('http') === 0) || d.blobUrl; });
+  }
+  // Check legacy single url field
+  return !!(lnk.url && lnk.url.indexOf('http') === 0);
+}
+
+// ── Evidence completeness panel ───────────────────────────────────────────
+function renderEvidenceProgress() {
+  var totalItems = 0, doneItems = 0;
+  var sectionStats = [];
+
+  function tally(links) {
+    (links || []).forEach(function(lnk) {
+      totalItems++;
+      if (linkHasDoc(lnk)) doneItems++;
+    });
+  }
+
+  // Legal
+  var legalTot = 0, legalDon = 0;
+  APP.legal.forEach(function(l) {
+    (l.links || []).forEach(function(lnk) { legalTot++; if (linkHasDoc(lnk)) legalDon++; });
+  });
+  if (legalTot > 0) sectionStats.push({ label: 'Legal', color: '#991b1b', done: legalDon, total: legalTot });
+  totalItems += legalTot; doneItems += legalDon;
+
+  // Sections
+  APP.sections.forEach(function(sec) {
+    var sTot = 0, sDon = 0;
+    (sec.standards || []).forEach(function(std) {
+      (std.links || []).forEach(function(lnk) { sTot++; if (linkHasDoc(lnk)) sDon++; });
+      (std.subs || []).forEach(function(sub) {
+        (sub.links || []).forEach(function(lnk) { sTot++; if (linkHasDoc(lnk)) sDon++; });
+      });
+    });
+    if (sTot > 0) sectionStats.push({ label: sec.label, color: sec.color, done: sDon, total: sTot });
+    totalItems += sTot; doneItems += sDon;
+  });
+
+  if (totalItems === 0) return '';
+
+  var pct = Math.round(doneItems / totalItems * 100);
+  var barColor = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444';
+  var missing = totalItems - doneItems;
+
+  var h = '<div class="panel" style="margin-bottom:16px">'
+    + '<div class="panel-hdr" style="margin-bottom:12px">'
+    + '<div class="panel-title">📎 Evidence documents</div>'
+    + '<span style="font-size:12px;color:var(--muted)">' + doneItems + ' of ' + totalItems + ' evidence items have documents</span>'
+    + '</div>'
+    // Overall bar
+    + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">'
+    + '<div style="flex:1;background:#f0ede6;border-radius:6px;height:14px;overflow:hidden">'
+    + '<div style="width:' + pct + '%;height:100%;background:' + barColor + ';border-radius:6px;transition:width .4s"></div>'
+    + '</div>'
+    + '<span style="font-size:20px;font-weight:700;font-family:var(--mono);color:' + barColor + ';min-width:48px;text-align:right">' + pct + '%</span>'
+    + '</div>'
+    // Per-section mini rows
+    + '<div style="display:flex;flex-direction:column;gap:5px">';
+
+  sectionStats.forEach(function(s) {
+    var sp = s.total ? Math.round(s.done / s.total * 100) : 0;
+    var sc = sp >= 80 ? '#22c55e' : sp >= 50 ? '#f59e0b' : '#ef4444';
+    h += '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span style="font-size:11px;color:' + s.color + ';min-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + s.label + '</span>'
+      + '<div style="flex:1;background:#f0ede6;border-radius:3px;height:6px;overflow:hidden">'
+      + '<div style="width:' + sp + '%;height:100%;background:' + sc + ';border-radius:3px"></div>'
+      + '</div>'
+      + '<span style="font-size:10px;font-family:var(--mono);color:var(--muted);min-width:52px;text-align:right">' + s.done + '/' + s.total + '</span>'
+      + '</div>';
+  });
+
+  h += '</div>'; // end section rows
+  if (missing > 0) {
+    h += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">'
+      + '<strong style="color:var(--text)">' + missing + ' item' + (missing > 1 ? 's' : '') + '</strong> still need' + (missing === 1 ? 's' : '') + ' documentation — see details below.'
+      + '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// ── Missing documents panel ───────────────────────────────────────────────
+function renderMissingDocs() {
+  var missingBySec = []; // [{secId, secLabel, secColor, items:[{path, letter, label}]}]
+
+  function addMissing(secId, secLabel, secColor, links, pathLabel) {
+    var items = [];
+    (links || []).forEach(function(lnk) {
+      if (!linkHasDoc(lnk)) {
+        var letterM = lnk.label ? lnk.label.match(/^([a-z]\.|[0-9]+\))\s*/) : null;
+        var letter = letterM ? letterM[0].trim() : '';
+        var labelText = letter ? lnk.label.slice(letterM[0].length).trim() : (lnk.label || '');
+        items.push({ path: pathLabel, letter: letter, label: labelText || lnk.label || '(no label)' });
+      }
+    });
+    if (items.length) {
+      // Find or create section bucket
+      var bucket = missingBySec.find(function(b) { return b.secId === secId; });
+      if (!bucket) { bucket = { secId: secId, secLabel: secLabel, secColor: secColor, items: [] }; missingBySec.push(bucket); }
+      items.forEach(function(it) { bucket.items.push(it); });
+    }
+  }
+
+  // Legal
+  APP.legal.forEach(function(l, i) {
+    addMissing('legal', 'Legal', '#991b1b', l.links, l.name);
+  });
+
+  // Sections
+  APP.sections.forEach(function(sec) {
+    (sec.standards || []).forEach(function(std) {
+      addMissing(sec.id, sec.label, sec.color, std.links, std.id + ' ' + std.name);
+      (std.subs || []).forEach(function(sub) {
+        addMissing(sec.id, sec.label, sec.color, sub.links, std.id + ' › ' + sub.name);
+      });
+    });
+  });
+
+  if (!missingBySec.length) {
+    return '<div class="panel ok-box" style="margin-bottom:16px">✓ All evidence items have at least one document attached.</div>';
+  }
+
+  var totalMissing = missingBySec.reduce(function(a, b) { return a + b.items.length; }, 0);
+
+  var h = '<div class="panel" style="margin-bottom:16px">'
+    + '<div class="panel-hdr" style="margin-bottom:12px">'
+    + '<div class="panel-title" style="color:var(--red)">⚠ Missing documentation</div>'
+    + '<span style="font-size:12px;color:var(--muted)">' + totalMissing + ' evidence item' + (totalMissing > 1 ? 's' : '') + ' with no documents yet</span>'
+    + '</div>';
+
+  missingBySec.forEach(function(bucket) {
+    h += '<div style="margin-bottom:10px">'
+      + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:' + bucket.secColor + ';margin-bottom:5px;padding-bottom:4px;border-bottom:1px solid var(--border)">'
+      + bucket.secLabel + ' <span style="font-weight:400;color:var(--faint)">(' + bucket.items.length + ')</span>'
+      + '</div>';
+
+    bucket.items.forEach(function(it) {
+      h += '<div style="display:flex;align-items:baseline;gap:6px;padding:3px 0;font-size:12px;border-bottom:1px solid #f8f7f4">'
+        + '<span style="font-size:10px;color:var(--faint);min-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0">' + it.path + '</span>'
+        + '<span style="font-family:var(--mono);font-size:11px;color:var(--teal);flex-shrink:0;min-width:18px">' + it.letter + '</span>'
+        + '<span style="color:var(--muted);flex:1">' + it.label + '</span>'
+        + '<span style="font-size:10px;padding:1px 6px;background:var(--red-l);color:var(--red);border-radius:3px;white-space:nowrap;flex-shrink:0">No docs</span>'
+        + '</div>';
+    });
+
+    h += '</div>'; // end bucket
+  });
+
+  h += '</div>'; // end panel
+  return h;
+}
+
 function getDefaultLegal() {
   return ['Open Meetings Act','Freedom of Information Act','Prevailing Wages','Harassment Policy','Drug Free Workplace','Americans with Disabilities Act','Family and Medical Leave Act','Communicable Disease Guidelines','Abused & Neglected Child Reporting','Employer Requirement — New Employees','Criminal Background Investigations','Ethics Ordinance / Resolution','Smoke Free Illinois Act','Toxic Substance Disclosure Act','Illinois Identity Protection Act','Moveable Soccer Safety Act','Firearm Concealed Carry Act','Local Gov. Efficiency Committees Act']
     .map(function(name, i) { return { id: 'L' + (i + 1), name: name, links: [], notes: '' }; });
@@ -1988,6 +2349,580 @@ function getDefaultTimeline() {
     {id:'t12',label:'Recognition at State Conference',sub:'Plaque at IAPD/IPRA Soaring to New Heights',deadline:'January',done:false}
   ];
 }
+
+
+// ═══════════════════════════════════════
+// MULTI-YEAR & EMAIL FEATURES
+// ═══════════════════════════════════════
+
+var DA_YEAR_ID = 'da-2025';
+var DA_YEAR_LABEL = 'DA 2025 — Buffalo Grove Park District';
+var DA_YEARS_CACHE = null; // list of all years
+
+// ── Load all DA years from Supabase ──
+async function loadDAYears() {
+  var rows = await sb('da_years', 'GET', null, '?order=year.desc');
+  DA_YEARS_CACHE = rows || [];
+  return DA_YEARS_CACHE;
+}
+
+// ── Save current state to a specific year ──
+async function saveToYear(yearId) {
+  var payload = {
+    sections: APP.sections,
+    legal: APP.legal,
+    timeline: APP.timeline,
+    updated_at: new Date().toISOString()
+  };
+  lsSet('da_app_state', { sections: APP.sections, legal: APP.legal, timeline: APP.timeline });
+  // Save to da_years table
+  await sb('da_years', 'PATCH', payload, '?id=eq.' + encodeURIComponent(yearId));
+  // Also keep da_app_state in sync
+  await sb('da_app_state', 'POST', { id: 'bgpd-2025', data: { sections: APP.sections, legal: APP.legal, timeline: APP.timeline }, updated_at: new Date().toISOString() });
+  lastSync = new Date();
+  updateSyncLabel();
+}
+
+// ── Archive current year ──
+function openArchiveYear() {
+  var evalDate = '';
+  var evalScore = '';
+  modal('Archive DA ' + new Date().getFullYear(),
+    '<div class="info-box">Archiving saves a permanent snapshot of all standards, evidence links, and scores for this DA cycle. You can start a new cycle afterwards.</div>'
+    + '<div class="form-group"><label>Evaluation date</label><input id="m-ev-date" class="form-input" placeholder="e.g. September 15, 2025" value="' + evalDate + '"></div>'
+    + '<div class="form-group"><label>Final score (optional)</label><input id="m-ev-score" class="form-input" type="number" placeholder="e.g. 487" value="' + evalScore + '"></div>'
+    + '<div class="form-group"><label>Notes</label><textarea id="m-ev-notes" class="form-input" rows="3" placeholder="Summary of evaluation outcome, areas of strength, areas for improvement…"></textarea></div>',
+    async function() {
+      var date = document.getElementById('m-ev-date').value.trim();
+      var score = document.getElementById('m-ev-score').value.trim();
+      var notes = document.getElementById('m-ev-notes').value.trim();
+
+      toast('Archiving…');
+
+      // Collect all review scores into array format for storage
+      var reviewArr = [];
+      Object.keys(REVIEW_SCORES).forEach(function(stdId) {
+        (REVIEW_SCORES[stdId] || []).forEach(function(r) {
+          reviewArr.push({ std_id: stdId, reviewer_name: r.reviewer_name, score: r.score, notes: r.notes });
+        });
+      });
+
+      // Collect self scores
+      var selfObj = {};
+      Object.keys(SELF_SCORES).forEach(function(k) { selfObj[k] = SELF_SCORES[k]; });
+
+      try {
+        await sb('da_years', 'PATCH', {
+          status: 'archived',
+          sections: APP.sections,
+          legal: APP.legal,
+          timeline: APP.timeline,
+          self_scores: selfObj,
+          review_scores: reviewArr,
+          evaluation_date: date,
+          eval_score: score ? parseFloat(score) : null,
+          notes: notes,
+          archived_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }, '?id=eq.' + DA_YEAR_ID);
+        toast('Archived ✓ — ' + DA_YEAR_LABEL);
+        DA_YEARS_CACHE = null;
+      } catch(e) {
+        toast('Archive failed: ' + e.message);
+      }
+    }, 'Archive this DA cycle');
+}
+
+// ── Start new DA year ──
+function openNewYear() {
+  modal('Start new DA cycle',
+    '<div class="info-box" style="margin-bottom:14px">Creates a fresh DA cycle for the next accreditation period.</div>'
+    + '<div class="form-group"><label>Year</label><input id="m-ny-year" class="form-input" type="number" placeholder="e.g. 2028" value="' + (new Date().getFullYear() + 3) + '"></div>'
+    + '<div class="form-group"><label>Label</label><input id="m-ny-label" class="form-input" value="DA ' + (new Date().getFullYear() + 3) + ' \u2014 Buffalo Grove Park District"></div>'
+    + '<div class="form-group"><label>Populate standards from</label>'
+    + '<select id="m-ny-source" class="form-input">'
+    + '<option value="duplicate">Duplicate structure \u2014 keeps all sections, standards, sub-standards, and evidence label names only. All links, uploaded documents, scores, and notes are cleared.</option>'
+    + '<option value="blank">Start blank \u2014 no sections, no legal standards (import from file or build from scratch)</option>'
+    + '</select></div>'
+    + '<div class="warn-box" style="margin-top:12px"><strong>Archive first!</strong> Make sure you have archived the current cycle before creating a new one.</div>',
+    async function() {
+      var year = parseInt(document.getElementById('m-ny-year').value);
+      var label = document.getElementById('m-ny-label').value.trim();
+      var source = document.getElementById('m-ny-source').value;
+
+      if (!year || !label) { toast('Year and label required'); return; }
+
+      toast('Creating new cycle\u2026');
+
+      // Save current cycle first
+      await saveToYear(DA_YEAR_ID);
+
+      // Delete all uploaded files for the current year from Supabase Storage + da_files
+      // Files are year-specific — new cycle starts with a clean slate
+      toast('Cleaning up files from current cycle…');
+      try {
+        var oldFiles = await sb('da_files', 'GET', null, '?year_id=eq.' + encodeURIComponent(DA_YEAR_ID) + '&select=id,file_path');
+        if (oldFiles && oldFiles.length) {
+          // Delete from Storage
+          for (var fi = 0; fi < oldFiles.length; fi++) {
+            try {
+              await fetch(SB_STORAGE + '/object/' + BUCKET + '/' + oldFiles[fi].file_path, {
+                method: 'DELETE',
+                headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+              });
+            } catch(fe) { /* continue even if storage delete fails */ }
+          }
+          // Delete records from da_files
+          await sb('da_files', 'DELETE', null, '?year_id=eq.' + encodeURIComponent(DA_YEAR_ID));
+          toast('Files cleared (' + oldFiles.length + ' file' + (oldFiles.length > 1 ? 's' : '') + ')');
+        }
+        // Also clear FILE_CACHE so the UI doesn't show stale data
+        FILE_CACHE = {};
+      } catch(fe) {
+        console.warn('File cleanup error (non-fatal):', fe);
+      }
+
+      var newId = 'da-' + year;
+      var newSections = [];
+      var newLegal = [];
+      var newTimeline = getDefaultTimeline();
+
+      if (source === 'duplicate') {
+        // ── DUPLICATE STRUCTURE ONLY ────────────────────────────────────────
+        // Keep: section names/colors, standard IDs/names/types,
+        //       sub-standard IDs/names, evidence LABEL TEXT (the "a. Shall include..." text)
+        // Clear: ALL urls/links (Google Drive, uploads, blobs), scores, notes
+        newSections = JSON.parse(JSON.stringify(APP.sections)).map(function(sec) {
+          sec.standards = sec.standards.map(function(std) {
+            // Keep label text only, strip ALL urls
+            std.links = (std.links || []).map(function(l) {
+              return { label: l.label, url: '', docs: [] };
+            });
+            if (std.subs) {
+              std.subs = std.subs.map(function(sub) {
+                sub.links = (sub.links || []).map(function(l) {
+                  return { label: l.label, url: '', docs: [] };
+                });
+                return sub;
+              });
+            }
+            // Clear scores and notes
+            std.notes = '';
+            return std;
+          });
+          return sec;
+        });
+        // Legal: keep standard names/IDs, clear all links and notes
+        newLegal = JSON.parse(JSON.stringify(APP.legal)).map(function(l) {
+          l.links = (l.links || []).map(function(lnk) {
+            return { label: lnk.label, url: '', docs: [] };
+          });
+          l.notes = '';
+          return l;
+        });
+      } else {
+        // BLANK: completely empty sections, default legal names with no links
+        newSections = [];
+        newLegal = getDefaultLegal();
+      }
+
+      // Check if year already exists
+      var existing = await sb('da_years', 'GET', null, '?id=eq.' + encodeURIComponent(newId));
+      if (existing && existing.length > 0) {
+        if (!confirm('A cycle for ' + year + ' already exists. Overwrite it?')) return;
+        await sb('da_years', 'PATCH', {
+          label: label,
+          status: 'active',
+          sections: newSections,
+          legal: newLegal,
+          timeline: newTimeline,
+          self_scores: {},
+          review_scores: [],
+          evaluation_date: null,
+          eval_score: null,
+          notes: '',
+          archived_at: null,
+          updated_at: new Date().toISOString()
+        }, '?id=eq.' + encodeURIComponent(newId));
+      } else {
+        await sb('da_years', 'POST', {
+          id: newId,
+          year: year,
+          label: label,
+          status: 'active',
+          sections: newSections,
+          legal: newLegal,
+          timeline: newTimeline,
+          self_scores: {},
+          review_scores: []
+        }, '');
+      }
+
+      // Switch to new year in app
+      DA_YEAR_ID = newId;
+      DA_YEAR_LABEL = label;
+      lsSet('da_active_year', {id: newId, label: label});
+      APP.sections = newSections;
+      APP.legal = newLegal.length ? newLegal : getDefaultLegal();
+      APP.timeline = newTimeline;
+      SELF_SCORES = {};
+      REVIEW_SCORES = {};
+
+      // Update active da_app_state so the app loads this year next time
+      await sb('da_app_state', 'POST', {
+        id: 'bgpd-2025',
+        data: { sections: APP.sections, legal: APP.legal, timeline: APP.timeline },
+        updated_at: new Date().toISOString()
+      });
+      lsSet('da_app_state', { sections: APP.sections, legal: APP.legal, timeline: APP.timeline });
+      lsSet('da_self_scores', {});
+
+      UI.activeSection = 'overview';
+      DA_YEARS_CACHE = null;
+      render();
+      toast('New cycle created: ' + label);
+    }, 'Create new cycle');
+}
+
+
+
+// ── View / switch between years ──
+async function openYearHistory() {
+  if (!DA_YEARS_CACHE) {
+    toast('Loading…');
+    await loadDAYears();
+  }
+  var years = DA_YEARS_CACHE || [];
+
+  var rows = years.map(function(y) {
+    var isCurrent = y.id === DA_YEAR_ID;
+    var statusColor = y.status === 'archived' ? '#166534' : y.status === 'active' ? '#1d6e72' : '#6b7280';
+    var statusBg = y.status === 'archived' ? '#f0fdf4' : y.status === 'active' ? '#e8f5f5' : '#f3f4f6';
+    return '<tr>'
+      + '<td><strong>' + y.year + '</strong></td>'
+      + '<td>' + y.label + (isCurrent ? ' <span style="font-size:10px;background:#e8f5f5;color:#1d6e72;padding:1px 6px;border-radius:3px;font-weight:600">CURRENT</span>' : '') + '</td>'
+      + '<td><span style="font-size:11px;padding:2px 7px;border-radius:3px;background:' + statusBg + ';color:' + statusColor + ';font-weight:600">' + y.status.toUpperCase() + '</span></td>'
+      + '<td style="font-size:11px;color:#6b7280">' + (y.evaluation_date || '—') + '</td>'
+      + '<td style="font-size:11px;font-weight:700">' + (y.eval_score ? y.eval_score + ' pts' : '—') + '</td>'
+      + '<td style="display:flex;gap:4px">'
+      + (!isCurrent ? '<button onclick="switchToYear(\'' + y.id + '\',\'' + y.label.replace(/'/g, "\\'") + '\')" style="font-size:11px;padding:3px 10px;border:1px solid var(--teal);border-radius:4px;background:var(--surf);color:var(--teal);cursor:pointer">Switch</button>' : '')
+      + '<button onclick="exportYearJSON(\'' + y.id + '\')" style="font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surf);color:var(--muted);cursor:pointer">Export</button>'
+      + (!isCurrent && y.status === 'archived' ? '<button onclick="confirmDeleteYear(\'' + y.id + '\',\'' + y.label.replace(/'/g, "\\'") + '\')" style="font-size:11px;padding:3px 10px;border:1px solid var(--red-m);border-radius:4px;background:var(--surf);color:var(--red);cursor:pointer">Delete</button>' : (!isCurrent && y.status !== 'archived' ? '<span style="font-size:10px;color:var(--faint);padding:3px 6px">Archive to delete</span>' : ''))
+      + '</td>'
+      + '</tr>';
+  }).join('');
+
+  document.getElementById('modal-root').innerHTML = '<div class="overlay" onclick="if(event.target===this)closeModal()">'
+    + '<div class="dialog" style="max-width:750px;width:96%">'
+    + '<h3>📅 DA Cycle History</h3>'
+    + '<div style="max-height:50vh;overflow-y:auto;margin-bottom:16px">'
+    + '<table class="review-table" style="width:100%">'
+    + '<thead><tr><th>Year</th><th>Label</th><th>Status</th><th>Eval Date</th><th>Score</th><th>Actions</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div>'
+    + '<div class="dlg-footer">'
+    + '<button class="tb-btn" onclick="closeModal()">Close</button>'
+    + '<button class="tb-btn primary" onclick="closeModal();openNewYear()">＋ New cycle</button>'
+    + '</div></div></div>';
+}
+
+async function switchToYear(yearId, yearLabel) {
+  if (!confirm('Switch to ' + yearLabel + '? Current unsaved changes will be lost.')) return;
+  closeModal();
+  toast('Loading ' + yearLabel + '…');
+
+  var rows = await sb('da_years', 'GET', null, '?id=eq.' + encodeURIComponent(yearId));
+  if (!rows || !rows[0]) { toast('Could not load year'); return; }
+
+  var y = rows[0];
+  DA_YEAR_ID = yearId;
+  DA_YEAR_LABEL = yearLabel;
+  lsSet('da_active_year', {id: yearId, label: yearLabel});
+  APP.sections = y.sections || [];
+  APP.legal = y.legal || getDefaultLegal();
+  APP.timeline = y.timeline || getDefaultTimeline();
+
+  // Load scores for that year
+  SELF_SCORES = y.self_scores || {};
+  REVIEW_SCORES = {};
+  if (Array.isArray(y.review_scores)) {
+    y.review_scores.forEach(function(r) {
+      if (!REVIEW_SCORES[r.std_id]) REVIEW_SCORES[r.std_id] = [];
+      REVIEW_SCORES[r.std_id].push(r);
+    });
+  }
+
+  lsSet('da_app_state', { sections: APP.sections, legal: APP.legal, timeline: APP.timeline });
+  lsSet('da_self_scores', SELF_SCORES);
+  FILE_CACHE = {}; // Clear file cache so files load fresh for this year
+  UI.activeSection = 'overview';
+  render();
+  var ym = yearLabel.match(/\d{4}/);
+  if (ym) document.title = 'Buffalo Grove PD \u2014 DA ' + ym[0];
+  toast('Switched to ' + yearLabel);
+}
+
+async function exportYearJSON(yearId) {
+  var rows = await sb('da_years', 'GET', null, '?id=eq.' + encodeURIComponent(yearId));
+  if (!rows || !rows[0]) { toast('Could not load year'); return; }
+  var blob = new Blob([JSON.stringify(rows[0], null, 2)], { type: 'application/json' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'bgpd_' + yearId + '_archive.json';
+  a.click();
+  toast('Exported');
+}
+async function confirmDeleteYear(yearId, yearLabel) {
+  // Only archived cycles can be deleted as a safety measure
+  modal('Delete archived DA cycle',
+    '<div class="warn-box"><strong>Permanently delete ' + yearLabel + '?</strong><br><br>'
+    + 'This will remove all standards, evidence links, scores, and evaluation data for this cycle from the database. <strong>This cannot be undone.</strong><br><br>'
+    + 'Tip: Export the cycle as JSON first to keep a local backup.</div>',
+    async function() {
+      toast('Deleting…');
+      try {
+        await sb('da_years', 'DELETE', null, '?id=eq.' + encodeURIComponent(yearId));
+        DA_YEARS_CACHE = null;
+        toast(yearLabel + ' deleted');
+        closeModal();
+        // Re-open the history modal refreshed
+        await openYearHistory();
+      } catch(e) {
+        toast('Delete failed: ' + e.message);
+      }
+    }, 'Permanently delete', true);
+}
+
+
+// ── Import standards from JSON/CSV ──
+function openImportStandards() {
+  modal('Import standards from file',
+    '<div class="info-box" style="margin-bottom:12px">'
+    + 'Import a new set of standards to replace the current structure. Evidence links and scores are preserved for matching standard IDs.'
+    + '</div>'
+    + '<div class="form-group"><label>Select file</label>'
+    + '<input type="file" id="m-std-file" class="form-input" accept=".json">'
+    + '</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-top:8px">'
+    + '<strong>Expected format:</strong> A JSON file with <code>{ "sections": [...] }</code> structure matching this app\'s export format. '
+    + 'Export the current standards via Admin → Export to see the format.'
+    + '</div>',
+    async function() {
+      var file = (document.getElementById('m-std-file').files || [])[0];
+      if (!file) { toast('No file selected'); return; }
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          var data = JSON.parse(e.target.result);
+          var newSections = data.sections || data;
+          if (!Array.isArray(newSections) || !newSections.length) {
+            toast('Invalid format — expected { sections: [...] }');
+            return;
+          }
+          // Preserve scores for matching std IDs
+          var selfScoresCopy = JSON.parse(JSON.stringify(SELF_SCORES));
+          APP.sections = newSections;
+          SELF_SCORES = {};
+          // Re-apply scores where IDs match
+          newSections.forEach(function(sec) {
+            (sec.standards || []).forEach(function(std) {
+              if (selfScoresCopy[std.id]) SELF_SCORES[std.id] = selfScoresCopy[std.id];
+            });
+          });
+          scheduleSave();
+          UI.activeSection = 'overview';
+          render();
+          toast('Standards imported — ' + newSections.length + ' sections');
+        } catch(ex) {
+          toast('Invalid JSON: ' + ex.message);
+        }
+      };
+      reader.readAsText(file);
+    }, 'Import standards');
+}
+
+// ── Email summary ──
+function openEmailSummary() {
+  var reviewers = [];
+  Object.values(REVIEW_SCORES).forEach(function(arr) {
+    arr.forEach(function(r) { if (reviewers.indexOf(r.reviewer_name) < 0) reviewers.push(r.reviewer_name); });
+  });
+
+  modal('Send evaluation summary',
+    '<div class="info-box" style="margin-bottom:14px">Sends a full HTML summary including all scores, reviewer ratings, and quick score breakdown to the specified recipients.</div>'
+    + '<div class="form-group"><label>Recipients (one per line or comma-separated)</label>'
+    + '<textarea id="m-email-to" class="form-input" rows="4" placeholder="jbeckmann@bgparks.org&#10;jzimmermann@bgparks.org&#10;estrojinc@bgparks.org"></textarea>'
+    + '</div>'
+    + '<div class="form-group"><label>Evaluation date (shown in email)</label>'
+    + '<input id="m-email-date" class="form-input" placeholder="e.g. September 15, 2025">'
+    + '</div>'
+    + '<div class="form-group"><label>Final score (optional)</label>'
+    + '<input id="m-email-score" class="form-input" type="number" placeholder="e.g. 487">'
+    + '</div>'
+    + (reviewers.length ? '<div class="ok-box">Evaluation team scores from ' + reviewers.length + ' reviewer' + (reviewers.length>1?'s':'') + ' will be included: ' + reviewers.join(', ') + '</div>' : '<div class="warn-box">No evaluation team scores found. Only self-review scores will be included.</div>'),
+    async function() {
+      var rawTo = document.getElementById('m-email-to').value.trim();
+      var evalDate = document.getElementById('m-email-date').value.trim();
+      var evalScore = document.getElementById('m-email-score').value.trim();
+
+      if (!rawTo) { toast('Please enter at least one recipient'); return; }
+
+      // Parse recipients
+      var recipients = rawTo.split(/[\n,]+/).map(function(e) { return e.trim(); }).filter(Boolean);
+      if (!recipients.length) { toast('No valid recipients'); return; }
+
+      toast('Sending to ' + recipients.length + ' recipient' + (recipients.length > 1 ? 's' : '') + '…');
+
+      try {
+        var r = await fetch(SB_URL + '/functions/v1/da-send-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+          body: JSON.stringify({
+            recipients: recipients,
+            yearLabel: DA_YEAR_LABEL,
+            sections: APP.sections,
+            legal: APP.legal,
+            selfScores: SELF_SCORES,
+            reviewScores: REVIEW_SCORES,
+            evalDate: evalDate,
+            evalScore: evalScore ? parseFloat(evalScore) : null,
+            senderName: REVIEWER_NAME || 'Admin'
+          })
+        });
+        var data = await r.json();
+
+        if (data.preview) {
+          // No Resend key — open preview in new tab
+          var w = window.open('', '_blank');
+          if (w) { w.document.write(data.html); w.document.close(); }
+          toast('Email preview opened in new tab (no email key configured)');
+          return;
+        }
+
+        if (data.ok) {
+          toast('Summary sent to ' + recipients.length + ' recipient' + (recipients.length > 1 ? 's' : '') + ' ✓');
+          // Log the send
+          sb('da_email_log', 'POST', {
+            year_id: DA_YEAR_ID,
+            sent_to: recipients,
+            subject: DA_YEAR_LABEL + ' — Evaluation Summary',
+            sent_by: REVIEWER_NAME || 'admin'
+          }, '').catch(function() {});
+        } else {
+          toast('Send error — check browser console for details');
+          console.error('Email send error:', data);
+        }
+      } catch(ex) {
+        toast('Network error: ' + ex.message);
+        console.error(ex);
+      }
+    }, 'Send summary email');
+}
+
+// ── Print / save as PDF ──
+function openPrintSummary() {
+  // Build a print-friendly version and open it
+  var reviewers = [];
+  Object.values(REVIEW_SCORES).forEach(function(arr) {
+    arr.forEach(function(r) { if (reviewers.indexOf(r.reviewer_name) < 0) reviewers.push(r.reviewer_name); });
+  });
+
+  var scored3 = Object.values(SELF_SCORES).filter(function(s) { return s.score === 3; }).length;
+  var scored2 = Object.values(SELF_SCORES).filter(function(s) { return s.score === 2; }).length;
+  var scored1 = Object.values(SELF_SCORES).filter(function(s) { return s.score === 1; }).length;
+
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + DA_YEAR_LABEL + ' Summary</title><style>'
+    + 'body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:12px;color:#1a1917;margin:0;padding:0}'
+    + '@media print{@page{margin:0.75in}}'
+    + '.header{background:#1d6e72;color:#fff;padding:24px 32px;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+    + '.header h1{font-size:20px;margin:0 0 4px}'
+    + '.header p{margin:0;opacity:.8;font-size:12px}'
+    + '.body{padding:24px 32px}'
+    + '.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}'
+    + '.metric{border:1px solid #e8e5dd;border-radius:6px;padding:10px 12px}'
+    + '.metric-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:4px}'
+    + '.metric-val{font-size:20px;font-weight:700}'
+    + 'table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px}'
+    + 'th{text-align:left;padding:6px 8px;border-bottom:2px solid #e8e5dd;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af}'
+    + 'td{padding:5px 8px;border-bottom:1px solid #f0ede6}'
+    + '.sec-title{font-size:13px;font-weight:700;margin:20px 0 8px;padding-bottom:6px;border-bottom:2px solid #e8e5dd}'
+    + '.chip{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}'
+    + '.badge{font-size:9px;padding:1px 5px;border-radius:2px;font-weight:600}'
+    + '.badge-M{background:#fee2e2;color:#991b1b}.badge-O{background:#dbeafe;color:#1e40af}.badge-B{background:#dcfce7;color:#166534}'
+    + '.footer{padding:12px 32px;font-size:10px;color:#9ca3af;border-top:1px solid #e8e5dd}'
+    + '</style></head><body>';
+
+  html += '<div class="header"><h1>' + DA_YEAR_LABEL + '</h1>'
+    + '<p>IAPD/IPRA Distinguished Accreditation — Evaluation Summary · Generated ' + new Date().toLocaleString() + '</p></div>';
+
+  html += '<div class="body">';
+
+  // Metrics
+  var totalDone = 0, totalAll = 0;
+  APP.sections.forEach(function(sec) {
+    (sec.standards || []).forEach(function(std) {
+      if (std.type !== 'B') {
+        totalAll++;
+        if ((SELF_SCORES[std.id] || {}).score > 0) totalDone++;
+      }
+    });
+  });
+  var legalPass = APP.legal.every(function(l, i) { return ((SELF_SCORES['legal_' + i] || {}).score || 0) >= 2; });
+
+  html += '<div class="metric-grid">'
+    + '<div class="metric"><div class="metric-lbl">Scored</div><div class="metric-val">' + totalDone + '/' + totalAll + '</div></div>'
+    + '<div class="metric"><div class="metric-lbl">Legal</div><div class="metric-val" style="color:' + (legalPass?'#166534':'#991b1b') + '">' + (legalPass?'✓ Pass':'✗ Needs work') + '</div></div>'
+    + '<div class="metric"><div class="metric-lbl">Score 3</div><div class="metric-val" style="color:#22c55e">' + scored3 + '</div></div>'
+    + '<div class="metric"><div class="metric-lbl">Score 2</div><div class="metric-val" style="color:#3b82f6">' + scored2 + '</div></div>'
+    + '</div>';
+
+  // Legal table
+  html += '<div class="sec-title">Legal Standards</div>';
+  html += '<table><thead><tr><th>#</th><th>Standard</th><th>Self</th>'
+    + reviewers.map(function(n) { return '<th>' + n.split(' ')[0] + '</th>'; }).join('') + '<th>Avg</th></tr></thead><tbody>';
+  APP.legal.forEach(function(l, i) {
+    var s = (SELF_SCORES['legal_' + i] || {}).score || 0;
+    var rrows = REVIEW_SCORES['legal_' + i] || [];
+    var avg = rrows.length ? (rrows.reduce(function(a,r){return a+r.score;},0)/rrows.length).toFixed(1) : '—';
+    var sc = s===3?'#22c55e':s===2?'#3b82f6':s===1?'#f59e0b':'#9ca3af';
+    html += '<tr><td>L.' + (i+1) + '</td><td>' + l.name + '</td>'
+      + '<td><span class="chip" style="background:' + sc + '22;color:' + sc + '">' + (s||'—') + '</span></td>'
+      + reviewers.map(function(n){var r=rrows.find(function(x){return x.reviewer_name===n;});var rc=r&&r.score?(r.score===3?'#22c55e':r.score===2?'#3b82f6':'#f59e0b'):'#9ca3af';return '<td><span class="chip" style="background:'+rc+'22;color:'+rc+'">'+(r?r.score:'—')+'</span></td>';}).join('')
+      + '<td><strong>' + avg + '</strong></td></tr>';
+  });
+  html += '</tbody></table>';
+
+  // Standards sections
+  APP.sections.forEach(function(sec) {
+    html += '<div class="sec-title" style="color:' + sec.color + '">' + sec.label + '</div>';
+    html += '<table><thead><tr><th>ID</th><th>Standard</th><th>Type</th><th>Self</th>'
+      + reviewers.map(function(n){return '<th>'+n.split(' ')[0]+'</th>';}).join('') + '<th>Avg</th><th>Notes</th></tr></thead><tbody>';
+    (sec.standards || []).forEach(function(std) {
+      var s = (SELF_SCORES[std.id] || {}).score || 0;
+      var notes = (SELF_SCORES[std.id] || {}).notes || '';
+      var rrows = REVIEW_SCORES[std.id] || [];
+      var avg = rrows.length ? (rrows.reduce(function(a,r){return a+r.score;},0)/rrows.length).toFixed(1) : '—';
+      var sc = s===3?'#22c55e':s===2?'#3b82f6':s===1?'#f59e0b':'#9ca3af';
+      html += '<tr><td style="font-family:monospace;font-size:10px;color:#9ca3af">' + std.id + '</td>'
+        + '<td>' + std.name + '</td>'
+        + '<td><span class="badge badge-' + (std.type||'O') + '">' + (std.type||'O') + '</span></td>'
+        + '<td><span class="chip" style="background:' + sc + '22;color:' + sc + '">' + (s||'—') + '</span></td>'
+        + reviewers.map(function(n){var r=rrows.find(function(x){return x.reviewer_name===n;});var rc=r&&r.score?(r.score===3?'#22c55e':r.score===2?'#3b82f6':'#f59e0b'):'#9ca3af';return '<td><span class="chip" style="background:'+rc+'22;color:'+rc+'">'+(r?r.score:'—')+'</span></td>';}).join('')
+        + '<td><strong>' + avg + '</strong></td>'
+        + '<td style="font-size:10px;color:#6b7280;font-style:italic">' + (notes||'') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  });
+
+  html += '</div>';
+  html += '<div class="footer">Buffalo Grove Park District · ' + DA_YEAR_LABEL + ' · IAPD/IPRA Distinguished Accreditation</div>';
+  html += '<script>window.onload=function(){window.print();}<\/script></body></html>';
+
+  var w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); }
+  else { toast('Pop-up blocked — allow pop-ups and try again'); }
+}
+
 
 async function loadAppState() {
   var rows = await sb('da_app_state', 'GET', null, '?id=eq.bgpd-2025');
